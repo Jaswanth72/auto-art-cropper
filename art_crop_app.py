@@ -16,9 +16,8 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True
 )
 
-# Limits
-MAX_SAFE_PIXELS = 100 * 1000000  # 100 megapixels
-RESIZE_TO_PIXELS = 40 * 1000000  # Resize to ~40 megapixels if needed
+# Absolute upper limit to avoid crashing Streamlit Cloud (100MP)
+MAX_PIXELS_ALLOWED = 100 * 1000000  # 100 million pixels
 
 if uploaded_files:
     tabs = st.tabs([f"{f.name}" for f in uploaded_files])
@@ -28,23 +27,16 @@ if uploaded_files:
             try:
                 st.subheader(f"📂 `{uploaded_file.name}`")
 
-                # Load image and get size
-                image = Image.open(uploaded_file).convert("RGB")
-                width, height = image.size
-                original_size = width * height
+                # Load dimensions only, no pixel array yet
+                img = Image.open(uploaded_file)
+                width, height = img.size
+                pixel_count = width * height
 
-                was_resized = False
-                resized_note = ""
+                if pixel_count > MAX_PIXELS_ALLOWED:
+                    st.error(f"🚫 `{uploaded_file.name}` is too large to process safely (>{MAX_PIXELS_ALLOWED // 1_000_000}MP). Please upload it alone after resizing.")
+                    continue
 
-                # Resize only if needed
-                if original_size > MAX_SAFE_PIXELS:
-                    st.warning(f"⚠️ `{uploaded_file.name}` is too large. Reducing quality to avoid crashing.")
-                    scale = (RESIZE_TO_PIXELS / original_size) ** 0.5
-                    new_size = (int(width * scale), int(height * scale))
-                    image = image.resize(new_size, Image.BICUBIC)
-                    was_resized = True
-                    resized_note = "⚠️ Resized to avoid crash. Re-upload alone for better quality."
-
+                image = img.convert("RGB")
                 image_np = np.array(image)
 
                 gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
@@ -70,14 +62,12 @@ if uploaded_files:
                             thumbnails.append((cropped_img, f"Artwork {valid_count + 1}"))
 
                             img_bytes = io.BytesIO()
-                            cropped_img.save(img_bytes, format='JPEG', quality=70 if was_resized else 95)
+                            cropped_img.save(img_bytes, format='JPEG', quality=95)
                             zip_file.writestr(f"{uploaded_file.name}_artwork_{valid_count + 1}.jpg", img_bytes.getvalue())
                             valid_count += 1
 
                 if valid_count > 0:
                     st.success(f"✅ Detected {valid_count} artworks")
-                    if was_resized:
-                        st.info(resized_note)
                     st.download_button(
                         label=f"⬇️ Download ZIP for `{uploaded_file.name}`",
                         data=zip_buffer.getvalue(),
