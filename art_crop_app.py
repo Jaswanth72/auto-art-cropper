@@ -21,15 +21,12 @@ if uploaded_files:
         with tabs[idx]:
             try:
                 st.subheader(f"📂 `{uploaded_file.name}`")
-                
-                # Load and optionally resize large image
-                image = Image.open(uploaded_file).convert("RGB")
-                max_dimension = 2000
-                if max(image.size) > max_dimension:
-                    image.thumbnail((max_dimension, max_dimension))
 
+                # Load image (NO resizing to preserve quality)
+                image = Image.open(uploaded_file).convert("RGB")
                 image_np = np.array(image)
 
+                # Preprocess for contour detection
                 gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
                 _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
                 contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -53,7 +50,7 @@ if uploaded_files:
                             thumbnails.append((cropped_img, f"Artwork {valid_count + 1}"))
 
                             img_bytes = io.BytesIO()
-                            cropped_img.save(img_bytes, format='JPEG')
+                            cropped_img.save(img_bytes, format='JPEG', quality=95)  # High quality
                             zip_file.writestr(f"{uploaded_file.name}_artwork_{valid_count + 1}.jpg", img_bytes.getvalue())
                             valid_count += 1
 
