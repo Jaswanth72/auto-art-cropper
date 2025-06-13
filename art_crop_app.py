@@ -6,7 +6,7 @@ import io
 import zipfile
 
 st.set_page_config(page_title="Crop Artworks", layout="wide")
-st.title("🎨 Crop Artworks from Multi-Image Uploads")
+st.title("🎨 Auto-Crop Multiple Artwork Sheets (One at a Time)")
 
 uploaded_files = st.file_uploader(
     "Upload multiple artwork sheets (TIFF/JPG/PNG)", 
@@ -14,14 +14,14 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True
 )
 
-MAX_PIXELS_SAFE = 100_000_000
+MAX_PIXELS_SAFE = 100_000_000  # 100 MP safe threshold
 
 if uploaded_files:
     tabs = st.tabs([f"{file.name}" for file in uploaded_files])
 
     for idx, uploaded_file in enumerate(uploaded_files):
         with tabs[idx]:
-            st.subheader(f"📂 `{uploaded_file.name}`")
+            st.subheader(f"📂 {uploaded_file.name}")
             pil_image = Image.open(uploaded_file)
             width, height = pil_image.size
             pixel_count = width * height
@@ -30,7 +30,7 @@ if uploaded_files:
                 st.error("❌ Image too large to process. Please reduce resolution.")
                 continue
 
-            if st.button(f"🚀 Process `{uploaded_file.name}`", key=f"btn_{idx}"):
+            if st.button(f"🚀 Process `{uploaded_file.name}`", key=f"process_{idx}"):
                 try:
                     image = pil_image.convert("RGB")
                     image_np = np.array(image)
@@ -43,6 +43,7 @@ if uploaded_files:
                     previews = []
 
                     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED) as zip_file:
+                        count = 0
                         for i, contour in enumerate(contours):
                             x, y, w, h = cv2.boundingRect(contour)
                             area = cv2.contourArea(contour)
@@ -56,22 +57,26 @@ if uploaded_files:
 
                                 img_bytes = io.BytesIO()
                                 cropped_img.save(img_bytes, format='JPEG', quality=95)
-                                zip_file.writestr(f"{uploaded_file.name}_artwork_{i+1}.jpg", img_bytes.getvalue())
-                                previews.append((cropped_img, f"Artwork {i+1}"))
+                                zip_file.writestr(f"{uploaded_file.name}_artwork_{count+1}.jpg", img_bytes.getvalue())
+                                previews.append((cropped_img, f"Artwork {count+1}"))
+                                count += 1
 
-                    st.success(f"✅ Cropped {len(previews)} images.")
-                    st.download_button(
-                        label="⬇️ Download ZIP",
-                        data=zip_buffer.getvalue(),
-                        file_name=f"{uploaded_file.name}_cropped.zip",
-                        mime="application/zip"
-                    )
+                    if previews:
+                        st.success(f"✅ Cropped {len(previews)} images.")
+                        st.download_button(
+                            label="⬇️ Download ZIP",
+                            data=zip_buffer.getvalue(),
+                            file_name=f"{uploaded_file.name}_cropped.zip",
+                            mime="application/zip"
+                        )
 
-                    st.subheader("🖼️ Preview All Cropped Images")
-                    cols = st.columns(3)
-                    for i, (img, label) in enumerate(previews):
-                        with cols[i % 3]:
-                            st.image(img, caption=label, use_container_width=True)
+                        with st.expander("🖼️ Preview Cropped Images"):
+                            cols = st.columns(3)
+                            for i, (img, label) in enumerate(previews):
+                                with cols[i % 3]:
+                                    st.image(img, caption=label, use_container_width=True)
+                    else:
+                        st.warning("⚠️ No valid artworks found in this file.")
 
                 except Exception as e:
-                    st.error(f"⚠️ Error processing file: {e}")
+                    st.error(f"❌ Error processing file: {e}")
