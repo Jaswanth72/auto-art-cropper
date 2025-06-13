@@ -20,21 +20,17 @@ if uploaded_files:
     for idx, uploaded_file in enumerate(uploaded_files):
         with tabs[idx]:
             try:
-                st.subheader(f"📂 `{uploaded_file.name}`")
-
-                # Load full-res image for cropping and saving
-                full_res_image = Image.open(uploaded_file).convert("RGB")
-                full_res_np = np.array(full_res_image)
-
-                # Create resized image for contour detection and preview
-                preview_image = full_res_image.copy()
+                st.subheader(f"📂 {uploaded_file.name}")
+                
+                # Load and optionally resize large image
+                image = Image.open(uploaded_file).convert("RGB")
                 max_dimension = 2000
-                if max(preview_image.size) > max_dimension:
-                    preview_image.thumbnail((max_dimension, max_dimension))
-                preview_np = np.array(preview_image)
+                if max(image.size) > max_dimension:
+                    image.thumbnail((max_dimension, max_dimension))
 
-                # Detection on resized preview image
-                gray = cv2.cvtColor(preview_np, cv2.COLOR_RGB2GRAY)
+                image_np = np.array(image)
+
+                gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
                 _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
                 contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -50,34 +46,31 @@ if uploaded_files:
 
                         if area > 5000 and 0.5 < aspect_ratio < 2.5 and w > 100 and h > 100:
                             extended_h = int(h * 1.2)
-                            y_end = min(y + extended_h, full_res_np.shape[0])
-                            cropped = full_res_np[y:y_end, x:x+w]
+                            y_end = min(y + extended_h, image_np.shape[0])
+                            cropped = image_np[y:y_end, x:x+w]
                             cropped_img = Image.fromarray(cropped)
 
+                            thumbnails.append((cropped_img, f"Artwork {valid_count + 1}"))
+
                             img_bytes = io.BytesIO()
-                            cropped_img.save(img_bytes, format='JPEG', quality=95)
+                            cropped_img.save(img_bytes, format='JPEG')
                             zip_file.writestr(f"{uploaded_file.name}_artwork_{valid_count + 1}.jpg", img_bytes.getvalue())
-
-                            if valid_count < 12:
-                                thumbnails.append((cropped_img, f"Artwork {valid_count + 1}"))
-
                             valid_count += 1
 
                 if valid_count > 0:
                     st.success(f"✅ Detected {valid_count} artworks")
                     st.download_button(
-                        label=f"⬇️ Download ZIP for `{uploaded_file.name}`",
+                        label=f"⬇️ Download ZIP for {uploaded_file.name}",
                         data=zip_buffer.getvalue(),
                         file_name=f"{uploaded_file.name}_cropped_artworks.zip",
                         mime="application/zip"
                     )
-                    if thumbnails:
-                        with st.expander("🖼️ Preview First 12 Cropped Artworks"):
-                            cols = st.columns(3)
-                            for i, (img, label) in enumerate(thumbnails):
-                                with cols[i % 3]:
-                                    st.image(img, caption=label, use_container_width=True)
+                    with st.expander("🖼️ Preview Cropped Artworks"):
+                        cols = st.columns(3)
+                        for i, (img, label) in enumerate(thumbnails):
+                            with cols[i % 3]:
+                                st.image(img, caption=label, use_container_width=True)
                 else:
-                    st.warning(f"⚠️ No valid artworks detected in `{uploaded_file.name}`.")
+                    st.warning(f"⚠️ No valid artworks detected in {uploaded_file.name}.")
             except Exception as e:
-                st.error(f"❌ Failed to process `{uploaded_file.name}`:\n\n{e}")
+                st.error(f"❌ Failed to process {uploaded_file.name}:\n\n{e}")
