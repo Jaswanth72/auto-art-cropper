@@ -1,76 +1,65 @@
 import streamlit as st
-from PIL import Image
-import cv2
-import numpy as np
-import io
-import zipfile
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+import os
+from io import BytesIO
 
-st.set_page_config(page_title="Batch Auto-Crop Artworks", layout="wide")
-st.title("🖼️ Batch Auto-Crop Artworks (with Labels)")
+st.title("Extract Images with Titles from PowerPoint")
 
-uploaded_files = st.file_uploader(
-    "Upload multiple TIFF/JPG/PNG files", 
-    type=["tif", "tiff", "jpg", "jpeg", "png"], 
-    accept_multiple_files=True
-)
+uploaded_file = st.file_uploader("Upload your .pptx file", type=["pptx"])
 
-if uploaded_files:
-    tabs = st.tabs([f"{f.name}" for f in uploaded_files])
+def find_best_text_below(image_shape, shapes):
+    closest_text = None
+    smallest_distance = float("inf")
+    image_bottom = image_shape.top + image_shape.height
+    image_center_x = image_shape.left + image_shape.width / 2
 
-    for idx, uploaded_file in enumerate(uploaded_files):
-        with tabs[idx]:
-            try:
-                st.subheader(f"📂 {uploaded_file.name}")
-                
-                # Load and optionally resize large image
-                image = Image.open(uploaded_file).convert("RGB")
-                max_dimension = 2000
-                if max(image.size) > max_dimension:
-                    image.thumbnail((max_dimension, max_dimension))
+    for shape in shapes:
+        if shape.has_text_frame and shape.text_frame.text.strip():
+            text_top = shape.top
+            text_center_x = shape.left + shape.width / 2
+            vertical_gap = text_top - image_bottom
+            horizontal_gap = abs(image_center_x - text_center_x)
 
-                image_np = np.array(image)
+            if 0 < vertical_gap < 1500000 and horizontal_gap < 300000:
+                distance = vertical_gap + horizontal_gap
+                if distance < smallest_distance:
+                    smallest_distance = distance
+                    closest_text = shape.text_frame.text.strip()
 
-                gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-                _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
-                contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return closest_text if closest_text else "Untitled"
 
-                zip_buffer = io.BytesIO()
-                valid_count = 0
-                thumbnails = []
+if uploaded_file:
+    prs = Presentation(uploaded_file)
+    new_prs = Presentation()
+    blank_slide_layout = new_prs.slide_layouts[6]
+    image_slide_count = 0
 
-                with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED) as zip_file:
-                    for i, contour in enumerate(contours):
-                        x, y, w, h = cv2.boundingRect(contour)
-                        area = cv2.contourArea(contour)
-                        aspect_ratio = w / h if h != 0 else 0
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                image_slide_count += 1
 
-                        if area > 5000 and 0.5 < aspect_ratio < 2.5 and w > 100 and h > 100:
-                            extended_h = int(h * 1.2)
-                            y_end = min(y + extended_h, image_np.shape[0])
-                            cropped = image_np[y:y_end, x:x+w]
-                            cropped_img = Image.fromarray(cropped)
+                # Save image temporarily in memory
+                image_bytes = shape.image.blob
+                img_stream = BytesIO(image_bytes)
 
-                            thumbnails.append((cropped_img, f"Artwork {valid_count + 1}"))
+                # Get best title below image
+                title_text = find_best_text_below(shape, slide.shapes)
 
-                            img_bytes = io.BytesIO()
-                            cropped_img.save(img_bytes, format='JPEG')
-                            zip_file.writestr(f"{uploaded_file.name}_artwork_{valid_count + 1}.jpg", img_bytes.getvalue())
-                            valid_count += 1
+                # Create new slide
+                slide_new = new_prs.slides.add_slide(blank_slide_layout)
+                pic = slide_new.shapes.add_picture(img_stream, Inches(1), Inches(1), width=Inches(6))
+                txBox = slide_new.shapes.add_textbox(Inches(1), Inches(5.5), Inches(6), Inches(1))
+                tf = txBox.text_frame
+                tf.text = title_text
+                tf.paragraphs[0].font.size = Pt(20)
 
-                if valid_count > 0:
-                    st.success(f"✅ Detected {valid_count} artworks")
-                    st.download_button(
-                        label=f"⬇️ Download ZIP for {uploaded_file.name}",
-                        data=zip_buffer.getvalue(),
-                        file_name=f"{uploaded_file.name}_cropped_artworks.zip",
-                        mime="application/zip"
-                    )
-                    with st.expander("🖼️ Preview Cropped Artworks"):
-                        cols = st.columns(3)
-                        for i, (img, label) in enumerate(thumbnails):
-                            with cols[i % 3]:
-                                st.image(img, caption=label, use_container_width=True)
-                else:
-                    st.warning(f"⚠️ No valid artworks detected in {uploaded_file.name}.")
-            except Exception as e:
-                st.error(f"❌ Failed to process {uploaded_file.name}:\n\n{e}")
+    # Save the new presentation to memory
+    output_stream = BytesIO()
+    new_prs.save(output_stream)
+    output_stream.seek(0)
+
+    st.success(f"Processed {image_slide_count} images.")
+    st.download_button("Download Processed PPTX", output_stream, file_name="Extracted_Images_With_Titles.pptx")
